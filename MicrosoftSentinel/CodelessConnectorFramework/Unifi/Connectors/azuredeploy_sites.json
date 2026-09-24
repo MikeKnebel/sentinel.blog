@@ -212,7 +212,7 @@
                         },
                         {
                             "description": "Sites with metadata details",
-                            "query": "[concat(parameters('tableName'), '\n| extend \n    siteName = tostring(meta.name),\n    siteDescription = tostring(meta.desc),\n    timezone = tostring(meta.timezone),\n    gatewayMac = tostring(meta.gatewayMac)\n| project TimeGenerated, siteId, siteName, siteDescription, timezone, gatewayMac\n| sort by siteName asc')]"
+                            "query": "[concat(parameters('tableName'), '\n| extend \n    siteName = tostring(meta.name),\n    siteDescription = tostring(meta['desc']),\n    timezone = tostring(meta.timezone),\n    gatewayMac = tostring(meta.gatewayMac)\n| project TimeGenerated, siteId, siteName, siteDescription, timezone, gatewayMac\n| sort by siteName asc')]"
                         },
                         {
                             "description": "Sites by permission level",
