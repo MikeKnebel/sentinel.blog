@@ -213,6 +213,8 @@
                                             { "name": "ap_to", "type": "string" },
                                             { "name": "radio", "type": "string" },
                                             { "name": "radio_name", "type": "string" },
+                                            { "name": "radio_from", "type": "string" },
+                                            { "name": "radio_to", "type": "string" },
                                             { "name": "ssid", "type": "string" },
                                             { "name": "essid", "type": "string" },
                                             { "name": "channel", "type": "dynamic" },
