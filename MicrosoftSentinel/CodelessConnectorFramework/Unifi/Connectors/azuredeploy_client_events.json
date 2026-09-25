@@ -25,10 +25,10 @@
         },
         "dataCollectionRuleName": {
             "type": "string",
-            "defaultValue": "[concat('UniFiSiteManager-ClientEvents-', parameters('siteLabel'), '-DCR')]",
-            "maxLength": 64,
+            "defaultValue": "[concat('UniFiCE-', parameters('siteLabel'), '-DCR')]",
+            "maxLength": 32,
             "metadata": {
-                "description": "Name of the Data Collection Rule created when you connect the connector in Sentinel"
+                "description": "Name of the Data Collection Rule. IMPORTANT: Sentinel composes the final name at connect time as 'Microsoft-Sentinel-' + this value + '-' + a 12 character id, so the final name is ~32 characters longer than this value. Azure limits the final name to 64 characters, therefore keep this value at 32 characters or fewer. Derived from siteLabel when left at the default (12 + length of siteLabel)"
             }
         },
         "tableName": {
@@ -64,9 +64,9 @@
         "siteLabel": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 20,
+            "maxLength": 10,
             "metadata": {
-                "description": "Short unique label identifying this site's connector (letters, digits and hyphens only, e.g. home or office1). Used in the connector, data collection rule and poller names and tagged on every row as the siteLabel column - deploy the template once per site with the same table name and a different label"
+                "description": "Short unique label identifying this site's connector (letters, digits and hyphens only, max. 10 characters, e.g. home, mr2 or office1) - this is your own label, NOT the UniFi site ID. Used in the connector, data collection rule and poller names and tagged on every row as the siteLabel column - deploy the template once per site with the same table name and a different label"
             }
         },
         "withinHours": {
