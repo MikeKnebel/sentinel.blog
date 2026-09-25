@@ -188,6 +188,21 @@
               "description": "VLAN of the network"
             },
             {
+              "name": "apFromName",
+              "type": "string",
+              "description": "Name of the access point the client roamed FROM (roam events)"
+            },
+            {
+              "name": "apFromMac",
+              "type": "string",
+              "description": "MAC address of the access point the client roamed FROM (roam events)"
+            },
+            {
+              "name": "previousSignal",
+              "type": "string",
+              "description": "Signal strength in dBm before the roam - together with 'signal' this documents the roaming decision (roam events)"
+            },
+            {
               "name": "apName",
               "type": "string",
               "description": "Name of the access point"
@@ -367,7 +382,7 @@
                     "destinations": [
                       "clv2ws1"
                     ],
-                    "transformKql": "[concat('source | extend siteLabel = \"', parameters('siteLabel'), '\" | extend TimeGenerated = todatetime(\"1970-01-01\") + tolong(tostring(timestamp)) * 1ms | where event startswith \"CLIENT_\" or event == \"BLOCKED_BY_FIREWALL\" | project-rename eventTitle = title_raw, message = message_raw | extend consoleName = tostring(parameters.CONSOLE_NAME.name), clientMac = iff(isempty(tostring(parameters.CLIENT.id)), tostring(parameters.SRC_CLIENT.id), tostring(parameters.CLIENT.id)), clientHostname = iff(isempty(tostring(parameters.CLIENT.hostname)), tostring(parameters.SRC_CLIENT.hostname), tostring(parameters.CLIENT.hostname)), clientIp = iff(isempty(tostring(parameters.IP.name)), tostring(parameters.CLIENT.ip), tostring(parameters.IP.name)), ssid = tostring(parameters.WLAN.name), networkName = tostring(parameters.NETWORK.name), vlan = tostring(parameters.NETWORK.vlan_id), apName = tostring(parameters.DEVICE.name), apMac = tostring(parameters.DEVICE.id), apModel = tostring(parameters.DEVICE.model), channel = tostring(parameters.CHANNEL.name), channelWidth = tostring(parameters.CHANNEL_WIDTH.name), radio = tostring(parameters.RADIO_BAND.name), signal = tostring(parameters.SIGNAL_STRENGTH.name), authMethod = tostring(parameters.AUTH_METHOD.name), wifiStats = tostring(parameters.WIFI_STATS.name) | extend band = case(radio == \"na\", \"5GHz\", radio == \"ng\", \"2.4GHz\", radio == \"6e\", \"6GHz\", radio) | project TimeGenerated, id, event, key, category, subcategory, severity, eventTitle, message, siteLabel, consoleName, clientMac, clientHostname, clientIp, ssid, networkName, vlan, apName, apMac, apModel, channel, channelWidth, radio, band, signal, authMethod, wifiStats, parameters')]",
+                    "transformKql": "[concat('source | extend siteLabel = \"', parameters('siteLabel'), '\" | extend TimeGenerated = todatetime(\"1970-01-01\") + tolong(tostring(timestamp)) * 1ms | where event startswith \"CLIENT_\" or event == \"BLOCKED_BY_FIREWALL\" | project-rename eventTitle = title_raw, message = message_raw | extend consoleName = tostring(parameters.CONSOLE_NAME.name), clientMac = iff(isempty(tostring(parameters.CLIENT.id)), tostring(parameters.SRC_CLIENT.id), tostring(parameters.CLIENT.id)), clientHostname = iff(isempty(tostring(parameters.CLIENT.hostname)), tostring(parameters.SRC_CLIENT.hostname), tostring(parameters.CLIENT.hostname)), clientIp = iff(isempty(tostring(parameters.IP.name)), tostring(parameters.CLIENT.ip), tostring(parameters.IP.name)), ssid = tostring(parameters.WLAN.name), networkName = tostring(parameters.NETWORK.name), vlan = tostring(parameters.NETWORK.vlan_id), apName = iff(isempty(tostring(parameters.DEVICE.name)), tostring(parameters.DEVICE_TO.name), tostring(parameters.DEVICE.name)), apMac = iff(isempty(tostring(parameters.DEVICE.id)), tostring(parameters.DEVICE_TO.id), tostring(parameters.DEVICE.id)), apModel = iff(isempty(tostring(parameters.DEVICE.model)), tostring(parameters.DEVICE_TO.model), tostring(parameters.DEVICE.model)), channel = tostring(parameters.CHANNEL.name), channelWidth = tostring(parameters.CHANNEL_WIDTH.name), radio = tostring(parameters.RADIO_BAND.name), signal = tostring(parameters.SIGNAL_STRENGTH.name), authMethod = tostring(parameters.AUTH_METHOD.name), wifiStats = tostring(parameters.WIFI_STATS.name), apFromName = tostring(parameters.DEVICE_FROM.name), apFromMac = tostring(parameters.DEVICE_FROM.id), previousSignal = tostring(parameters.PREVIOUS_SIGNAL_STRENGTH.name) | extend band = case(radio == \"na\", \"5GHz\", radio == \"ng\", \"2.4GHz\", radio == \"6e\", \"6GHz\", radio) | project TimeGenerated, id, event, key, category, subcategory, severity, eventTitle, message, siteLabel, consoleName, clientMac, clientHostname, clientIp, ssid, networkName, vlan, apFromName, apFromMac, previousSignal, apName, apMac, apModel, channel, channelWidth, radio, band, signal, authMethod, wifiStats, parameters')]",
                     "outputStream": "[variables('outputStream')]"
                   }
                 ]
@@ -415,7 +430,7 @@
             },
             {
               "description": "Roaming events (full details in parameters column)",
-              "query": "[concat(parameters('tableName'), '\n| summarize arg_max(TimeGenerated, *) by id\n| where event == \"CLIENT_ROAMED\"\n| project TimeGenerated, siteLabel, clientHostname, clientMac, ssid, apName, apModel, band, channel, parameters\n| sort by TimeGenerated desc')]"
+              "query": "[concat(parameters('tableName'), '\n| summarize arg_max(TimeGenerated, *) by id\n| where event == \"CLIENT_ROAMED\"\n| project TimeGenerated, siteLabel, clientHostname, clientMac, apFromName, apFromMac, previousSignal, apName, apModel, band, channel, ssid, parameters\n| sort by TimeGenerated desc')]"
             },
             {
               "description": "Connects and disconnects per client and site (last 24 hours)",
