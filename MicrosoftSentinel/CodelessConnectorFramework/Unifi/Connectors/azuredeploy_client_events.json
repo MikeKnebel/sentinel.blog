@@ -1,0 +1,578 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "workspace": {
+            "type": "string",
+            "minLength": 1,
+            "metadata": {
+                "description": "Log Analytics workspace name"
+            }
+        },
+        "workspace-location": {
+            "type": "string",
+            "minLength": 1,
+            "metadata": {
+                "description": "Region of the Log Analytics workspace"
+            }
+        },
+        "dataCollectionEndpointName": {
+            "type": "string",
+            "minLength": 1,
+            "metadata": {
+                "description": "Name of the Data Collection Endpoint"
+            }
+        },
+        "dataCollectionRuleName": {
+            "type": "string",
+            "defaultValue": "[concat('UniFiSiteManager-ClientEvents-', parameters('siteLabel'), '-DCR')]",
+            "metadata": {
+                "description": "Name of the Data Collection Rule (unique per site - derived from siteLabel when left at the default)"
+            }
+        },
+        "tableName": {
+            "type": "string",
+            "defaultValue": "UniFiSiteManager_ClientEvents_CL",
+            "metadata": {
+                "description": "Custom log table name (must end with _CL). Keep the same value on every deployment: deploy this template once per site with a unique siteLabel and all sites collect into this one table"
+            }
+        },
+        "pollingIntervalMinutes": {
+            "type": "int",
+            "defaultValue": 15,
+            "minValue": 1,
+            "maxValue": 60,
+            "metadata": {
+                "description": "How often to poll the UniFi Site Manager API (in minutes). Every poll re-fetches the events inside the withinHours lookback window, so each event is stored once per poll: copies per event = (withinHours * 60) / pollingIntervalMinutes (4 with the defaults). Keep pollingIntervalMinutes >= (withinHours * 60) / 4 to stay at 4 copies or fewer"
+            }
+        },
+        "consoleId": {
+            "type": "string",
+            "minLength": 1,
+            "metadata": {
+                "description": "ID of the UniFi console (host) managing the site - the 'id' column in UniFiSiteManager_Hosts_CL or the 'hostId' column in UniFiSiteManager_Sites_CL"
+            }
+        },
+        "siteId": {
+            "type": "string",
+            "minLength": 1,
+            "metadata": {
+                "description": "ID of the site whose wireless client events will be collected - the 'siteId' column in UniFiSiteManager_Sites_CL"
+            }
+        },
+        "siteLabel": {
+            "type": "string",
+            "minLength": 1,
+            "metadata": {
+                "description": "Short unique label identifying this site's connector (letters, digits and hyphens only, e.g. home or office1). Used in the connector, data collection rule and poller names and tagged on every row as the siteLabel column - deploy the template once per site with the same table name and a different label"
+            }
+        },
+        "withinHours": {
+            "type": "int",
+            "defaultValue": 1,
+            "minValue": 1,
+            "maxValue": 24,
+            "metadata": {
+                "description": "How far back each poll requests events from the UniFi event log (in hours, minimum the API accepts is 1). Every poll re-fetches the whole window, so copies per event = (withinHours * 60) / pollingIntervalMinutes (4 with the defaults). If you raise this, raise pollingIntervalMinutes accordingly to keep duplicates capped - e.g. withinHours 2 requires a 30 minute polling interval for 4 copies"
+            }
+        }
+    },
+    "variables": {
+        "workspaceResourceId": "[resourceId('microsoft.OperationalInsights/Workspaces', parameters('workspace'))]",
+        "dataCollectionEndpointId": "[resourceId('Microsoft.Insights/dataCollectionEndpoints', parameters('dataCollectionEndpointName'))]",
+        "streamName": "[concat('Custom-', replace(parameters('tableName'), '_CL', '_Input'))]",
+        "outputStream": "[concat('Custom-', parameters('tableName'))]",
+        "apiEndpoint": "[concat('https://api.ui.com/v1/connector/consoles/', parameters('consoleId'), '/proxy/network/api/s/', parameters('siteId'), '/stat/event')]",
+        "_solutionName": "UniFi Site Manager",
+        "_solutionVersion": "3.0.0",
+        "_solutionAuthor": "Fetch Labs",
+        "_solutionId": "[concat('azuresentinel.azure-sentinel-solution-unifi-sitemanager-clientevents-', parameters('siteLabel'))]",
+        "_solutionTier": "Community",
+        "dataConnectorVersionConnectorDefinition": "1.0.0",
+        "dataConnectorVersionConnections": "1.0.0",
+        "_dataConnectorContentIdConnectorDefinition": "[concat('UniFiSiteManagerClientEventsConnectorDefinition-', parameters('siteLabel'))]",
+        "dataConnectorTemplateNameConnectorDefinition": "[concat(parameters('workspace'),'-dc-',uniquestring(variables('_dataConnectorContentIdConnectorDefinition')))]",
+        "_dataConnectorContentIdConnections": "[concat('UniFiSiteManagerClientEventsConnections-', parameters('siteLabel'))]",
+        "dataConnectorTemplateNameConnections": "[concat(parameters('workspace'),'-dc-',uniquestring(variables('_dataConnectorContentIdConnections')))]",
+        "_connectorUiConfigId": "[concat('UniFiSiteManagerClientEventsConnector-', parameters('siteLabel'))]",
+        "_connectorDataType": "[concat('UniFi Site Manager - Client Events (', parameters('siteLabel'), ')')]",
+        "connectorDisplayName": "[concat(variables('_solutionName'), ' - Client Events (', parameters('siteLabel'), ')')]"
+    },
+    "resources": [
+        {
+            "name": "[concat(parameters('workspace'), '/', parameters('tableName'))]",
+            "apiVersion": "2022-10-01",
+            "type": "Microsoft.OperationalInsights/workspaces/tables",
+            "location": "[parameters('workspace-location')]",
+            "properties": {
+                "schema": {
+                    "name": "[parameters('tableName')]",
+                    "columns": [
+                        { "name": "TimeGenerated", "type": "datetime", "description": "Event time from the UniFi event timestamp" },
+                        { "name": "id", "type": "string", "description": "Unique event identifier (UniFi event _id) - use for deduplication" },
+                        { "name": "key", "type": "string", "description": "Event type key (e.g., EVT_WU_Connected, EVT_WU_Disconnected, EVT_WU_Roam, EVT_WU_RoamRadio)" },
+                        { "name": "subsystem", "type": "string", "description": "Event subsystem (e.g., wlan)" },
+                        { "name": "msg", "type": "string", "description": "Human-readable event message from the UniFi controller" },
+                        { "name": "siteId", "type": "string", "description": "Site where the event occurred (as reported by the UniFi event)" },
+                        { "name": "siteLabel", "type": "string", "description": "Deployment label of the connector that collected this event - stable per-site filter when multiple site connectors share this table" },
+                        { "name": "ap", "type": "string", "description": "MAC address of the access point involved in the event" },
+                        { "name": "apName", "type": "string", "description": "Name of the access point involved in the event" },
+                        { "name": "apFrom", "type": "string", "description": "MAC address of the access point the client roamed from (roam events)" },
+                        { "name": "apTo", "type": "string", "description": "MAC address of the access point the client roamed to (roam events)" },
+                        { "name": "radio", "type": "string", "description": "Radio band code of the access point radio (ng = 2.4 GHz, na = 5 GHz)" },
+                        { "name": "radioName", "type": "string", "description": "Access point radio identifier (e.g., ngr1, nar2)" },
+                        { "name": "band", "type": "string", "description": "Frequency band derived from the radio code (2.4GHz, 5GHz, 6GHz, or the raw radio code if unknown)" },
+                        { "name": "radioFrom", "type": "string", "description": "Radio band code the client roamed from (roam events)" },
+                        { "name": "radioTo", "type": "string", "description": "Radio band code the client roamed to (roam events)" },
+                        { "name": "ssid", "type": "string", "description": "SSID the client connected or roamed to (when reported by the event)" },
+                        { "name": "essid", "type": "string", "description": "SSID as reported by some UniFi firmware versions (ESSID field)" },
+                        { "name": "channel", "type": "string", "description": "Wireless channel of the access point radio" },
+                        { "name": "channelFrom", "type": "string", "description": "Channel the client roamed from (roam events)" },
+                        { "name": "channelTo", "type": "string", "description": "Channel the client roamed to (roam events)" },
+                        { "name": "user", "type": "string", "description": "Client MAC address" },
+                        { "name": "mac", "type": "string", "description": "Client MAC address as reported by some event types" },
+                        { "name": "hostname", "type": "string", "description": "Client hostname" },
+                        { "name": "ip", "type": "string", "description": "Client IP address" },
+                        { "name": "guest", "type": "string", "description": "Guest client MAC for guest-related events" },
+                        { "name": "duration", "type": "string", "description": "Duration value reported by the event (e.g., how long the client was connected before disconnecting)" }
+                    ]
+                }
+            }
+        },
+        {
+            "type": "Microsoft.OperationalInsights/workspaces/providers/contentTemplates",
+            "apiVersion": "2023-04-01-preview",
+            "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/', variables('dataConnectorTemplateNameConnectorDefinition'), variables('dataConnectorVersionConnectorDefinition'))]",
+            "location": "[parameters('workspace-location')]",
+            "dependsOn": [
+                "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspace')), 'Microsoft.SecurityInsights/contentPackages', variables('_solutionId'))]"
+            ],
+            "properties": {
+                "contentId": "[variables('_dataConnectorContentIdConnectorDefinition')]",
+                "displayName": "[concat(variables('connectorDisplayName'), ' Connector Definition')]",
+                "contentKind": "DataConnector",
+                "mainTemplate": {
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                    "contentVersion": "[variables('dataConnectorVersionConnectorDefinition')]",
+                    "parameters": {},
+                    "variables": {},
+                    "resources": [
+                        {
+                            "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/',concat('DataConnector-', variables('_dataConnectorContentIdConnectorDefinition')))]",
+                            "apiVersion": "2022-01-01-preview",
+                            "type": "Microsoft.OperationalInsights/workspaces/providers/metadata",
+                            "properties": {
+                                "parentId": "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspace')), 'Microsoft.SecurityInsights/dataConnectorDefinitions', variables('_dataConnectorContentIdConnectorDefinition'))]",
+                                "contentId": "[variables('_dataConnectorContentIdConnectorDefinition')]",
+                                "kind": "DataConnector",
+                                "version": "[variables('dataConnectorVersionConnectorDefinition')]",
+                                "source": {
+                                    "sourceId": "[variables('_solutionId')]",
+                                    "name": "[variables('_solutionName')]",
+                                    "kind": "Solution"
+                                },
+                                "author": {
+                                    "name": "[variables('_solutionAuthor')]"
+                                },
+                                "support": {
+                                    "name": "[variables('_solutionAuthor')]",
+                                    "tier": "[variables('_solutionTier')]"
+                                },
+                                "dependencies": {
+                                    "criteria": [
+                                        {
+                                            "version": "[variables('dataConnectorVersionConnections')]",
+                                            "contentId": "[variables('_dataConnectorContentIdConnections')]",
+                                            "kind": "ResourcesDataConnector"
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                        {
+                            "name": "[parameters('dataCollectionRuleName')]",
+                            "apiVersion": "2021-09-01-preview",
+                            "type": "Microsoft.Insights/dataCollectionRules",
+                            "location": "[parameters('workspace-location')]",
+                            "properties": {
+                                "dataCollectionEndpointId": "[variables('dataCollectionEndpointId')]",
+                                "streamDeclarations": {
+                                    "[variables('streamName')]": {
+                                        "columns": [
+                                            { "name": "_id", "type": "string" },
+                                            { "name": "datetime", "type": "string" },
+                                            { "name": "key", "type": "string" },
+                                            { "name": "subsystem", "type": "string" },
+                                            { "name": "msg", "type": "string" },
+                                            { "name": "site_id", "type": "string" },
+                                            { "name": "ap", "type": "string" },
+                                            { "name": "ap_name", "type": "string" },
+                                            { "name": "ap_from", "type": "string" },
+                                            { "name": "ap_to", "type": "string" },
+                                            { "name": "radio", "type": "string" },
+                                            { "name": "radio_name", "type": "string" },
+                                            { "name": "ssid", "type": "string" },
+                                            { "name": "essid", "type": "string" },
+                                            { "name": "channel", "type": "dynamic" },
+                                            { "name": "channel_from", "type": "dynamic" },
+                                            { "name": "channel_to", "type": "dynamic" },
+                                            { "name": "user", "type": "string" },
+                                            { "name": "mac", "type": "string" },
+                                            { "name": "hostname", "type": "string" },
+                                            { "name": "ip", "type": "string" },
+                                            { "name": "guest", "type": "string" },
+                                            { "name": "duration", "type": "dynamic" }
+                                        ]
+                                    }
+                                },
+                                "destinations": {
+                                    "logAnalytics": [
+                                        {
+                                            "workspaceResourceId": "[variables('workspaceResourceId')]",
+                                            "name": "clv2ws1"
+                                        }
+                                    ]
+                                },
+                                "dataFlows": [
+                                    {
+                                        "streams": ["[variables('streamName')]"],
+                                        "destinations": ["clv2ws1"],
+                                        "transformKql": "[concat('source | extend siteLabel = \"', parameters('siteLabel'), '\" | extend TimeGenerated = todatetime(tostring(column_ifexists(\"datetime\", \"\"))), id = tostring(column_ifexists(\"_id\", \"\")) | project-rename siteId = site_id, apName = ap_name, apFrom = ap_from, apTo = ap_to, radioName = radio_name, radioFrom = radio_from, radioTo = radio_to | where key startswith \"EVT_WU_\" or key startswith \"EVT_WG_\" | extend channel = tostring(channel), channelFrom = tostring(channel_from), channelTo = tostring(channel_to), duration = tostring(duration), band = case(radio == \"ng\", \"2.4GHz\", radio == \"na\", \"5GHz\", radio == \"6e\", \"6GHz\", tostring(radio)) | project TimeGenerated, id, key, subsystem, msg, siteId, siteLabel, ap, apName, apFrom, apTo, radio, radioName, band, radioFrom, radioTo, ssid, essid, channel, channelFrom, channelTo, user, mac, hostname, ip, guest, duration')]",
+                                        "outputStream": "[variables('outputStream')]"
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "packageKind": "Solution",
+                "packageVersion": "[variables('_solutionVersion')]",
+                "packageName": "[variables('_solutionName')]",
+                "contentProductId": "[concat(substring(variables('_solutionId'), 0, 50),'-','dc','-', uniqueString(concat(variables('_solutionId'),'-','DataConnector','-',variables('_dataConnectorContentIdConnectorDefinition'),'-', variables('dataConnectorVersionConnectorDefinition'))))]",
+                "packageId": "[variables('_solutionId')]",
+                "contentSchemaVersion": "3.0.0",
+                "version": "[variables('_solutionVersion')]"
+            }
+        },
+        {
+            "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/',variables('_dataConnectorContentIdConnectorDefinition'))]",
+            "apiVersion": "2022-09-01-preview",
+            "type": "Microsoft.OperationalInsights/workspaces/providers/dataConnectorDefinitions",
+            "location": "[parameters('workspace-location')]",
+            "kind": "Customizable",
+            "properties": {
+                "connectorUiConfig": {
+                    "id": "[variables('_connectorUiConfigId')]",
+                    "title": "[concat(variables('connectorDisplayName'), ' (via API)')]",
+                    "publisher": "Fetch Labs",
+                    "descriptionMarkdown": "This connector ingests wireless client connection events from your UniFi Network controller event log through the [UniFi Site Manager API](https://developer.ui.com/site-manager-api/gettingstarted) cloud connector into Microsoft Sentinel.\n\nIt collects the events that matter when troubleshooting Wi-Fi client connectivity: when clients connect, disconnect and roam, and with which access point, frequency band, channel and SSID.\n\n**Data Collected:**\n- Client connect and disconnect events (EVT_WU_Connected, EVT_WU_Disconnected)\n- Roaming events between access points or radios, including the source and target AP, radio and channel (EVT_WU_Roam, EVT_WU_RoamRadio, EVT_WU_RoamRadioPref)\n- Guest client events (EVT_WG_*)\n- Access point name and MAC, radio band code (2.4 GHz / 5 GHz / 6 GHz bands derived into a band column), channel, SSID, client MAC, hostname, IP and site\n\n**Scope:**\nThis connector polls the event log of exactly one site on one UniFi console. Deploy the template once per site you want to monitor: keep the same tableName on every deployment so all sites write into ONE table, and give each deployment a unique siteLabel - every row is tagged with it in the siteLabel column, so you can select a site with | where siteLabel == \"home\". The native siteId column (from the UniFi event) is also available. Only wireless device events (EVT_WU_/EVT_WG_) are stored - administrative, system and wired events are filtered out by the data collection rule.\n\n**Note on duplicates:**\nThe UniFi event log has no incremental cursor, so every poll re-reads events from the lookback window (withinHours parameter). With the defaults (15 minute polling interval, 1 hour lookback) each event is stored at most ~4 times - copies per event = (withinHours * 60) / pollingIntervalMinutes. Always deduplicate before counting or listing: the sample queries below use summarize arg_max(TimeGenerated, *) by id - apply the same pattern in your own queries.\n\n**Rate Limits:**\n- v1 stable: 10,000 requests per minute\n\n**Prerequisites:**\n1. Sign in to [UniFi Site Manager](https://unifi.ui.com)\n2. Navigate to **API** from the left navigation\n3. Click **Create API Key**\n4. Copy and securely store the generated key (shown only once)\n5. Get the console ID and site ID of the site to monitor (see instructions below)",
+                    "graphQueriesTableName": "[parameters('tableName')]",
+                    "graphQueries": [
+                        {
+                            "metricName": "Total client events received",
+                            "legend": "UniFi Client Events",
+                            "baseQuery": "[parameters('tableName')]"
+                        }
+                    ],
+                    "sampleQueries": [
+                        {
+                            "description": "All wireless client events for one site (replace label)",
+                            "query": "[concat(parameters('tableName'), '\n| where siteLabel =~ \"home\"\n| summarize arg_max(TimeGenerated, *) by id\n| project TimeGenerated, key, hostname, user, apName, radio, band, channel, ssid, essid, siteId\n| sort by TimeGenerated desc\n| take 100')]"
+                        },
+                        {
+                            "description": "All wireless client events across all sites (deduplicated)",
+                            "query": "[concat(parameters('tableName'), '\n| summarize arg_max(TimeGenerated, *) by id\n| project TimeGenerated, siteLabel, key, hostname, user, apName, radio, band, channel, ssid, essid\n| sort by TimeGenerated desc\n| take 100')]"
+                        },
+                        {
+                            "description": "Roaming events between access points and radios",
+                            "query": "[concat(parameters('tableName'), '\n| summarize arg_max(TimeGenerated, *) by id\n| where key == \"EVT_WU_Roam\" or key == \"EVT_WU_RoamRadio\" or key == \"EVT_WU_RoamRadioPref\"\n| project TimeGenerated, siteLabel, hostname, user, apName, apFrom, apTo, radioFrom, radioTo, band, channelFrom, channelTo, ssid, msg\n| sort by TimeGenerated desc')]"
+                        },
+                        {
+                            "description": "Connects and disconnects per client and site (last 24 hours)",
+                            "query": "[concat(parameters('tableName'), '\n| where TimeGenerated > ago(24h) and (key == \"EVT_WU_Connected\" or key == \"EVT_WU_Disconnected\")\n| summarize arg_max(TimeGenerated, *) by id\n| summarize Events = count() by siteLabel, hostname, user\n| sort by Events desc')]"
+                        },
+                        {
+                            "description": "Disconnects by access point and band (last 24 hours)",
+                            "query": "[concat(parameters('tableName'), '\n| where TimeGenerated > ago(24h) and key == \"EVT_WU_Disconnected\"\n| summarize arg_max(TimeGenerated, *) by id\n| summarize Disconnects = count() by siteLabel, apName, band\n| sort by Disconnects desc')]"
+                        },
+                        {
+                            "description": "Connection timeline for one client (replace MAC or hostname)",
+                            "query": "[concat(parameters('tableName'), '\n| summarize arg_max(TimeGenerated, *) by id\n| where user =~ \"AA:BB:CC:DD:EE:FF\" or hostname =~ \"my-device\"\n| project TimeGenerated, siteLabel, key, msg, apName, apFrom, apTo, radio, band, channel, ssid, essid\n| sort by TimeGenerated asc')]"
+                        },
+                        {
+                            "description": "Most roamed clients per site (last 7 days)",
+                            "query": "[concat(parameters('tableName'), '\n| where TimeGenerated > ago(7d) and key startswith \"EVT_WU_Roam\"\n| summarize arg_max(TimeGenerated, *) by id\n| summarize Roams = count() by siteLabel, hostname, user\n| sort by Roams desc')]"
+                        },
+                        {
+                            "description": "Band and channel usage of recent connects (last 24 hours)",
+                            "query": "[concat(parameters('tableName'), '\n| where TimeGenerated > ago(24h) and key == \"EVT_WU_Connected\"\n| summarize arg_max(TimeGenerated, *) by id\n| summarize Connections = count() by siteLabel, band, channel\n| sort by Connections desc')]"
+                        }
+                    ],
+                    "dataTypes": [
+                        {
+                            "name": "[parameters('tableName')]",
+                            "lastDataReceivedQuery": "[concat(parameters('tableName'), '\n| summarize Time = max(TimeGenerated)\n| where isnotempty(Time)')]"
+                        }
+                    ],
+                    "connectivityCriteria": [
+                        {
+                            "type": "HasDataConnectors"
+                        }
+                    ],
+                    "availability": {
+                        "status": 1,
+                        "isPreview": true
+                    },
+                    "permissions": {
+                        "resourceProvider": [
+                            {
+                                "provider": "Microsoft.OperationalInsights/workspaces",
+                                "permissionsDisplayText": "Read and Write permissions required",
+                                "providerDisplayName": "Workspace",
+                                "scope": "Workspace",
+                                "requiredPermissions": {
+                                    "read": true,
+                                    "write": true,
+                                    "delete": true
+                                }
+                            }
+                        ],
+                        "customs": [
+                            {
+                                "name": "UniFi Site Manager API Key",
+                                "description": "A read-only API key from [unifi.ui.com](https://unifi.ui.com) with access to your UniFi deployment. The API key is tied to your UI account and provides access to all hosts you own or have super admin permissions for."
+                            },
+                            {
+                                "name": "Console and site IDs",
+                                "description": "The IDs of the console and site to monitor. Use the UniFi Site Manager Hosts and Sites connectors or GET /v1/hosts and GET /v1/sites to list them."
+                            }
+                        ]
+                    },
+                    "instructionSteps": [
+                        {
+                            "title": "1. Obtain a UniFi Site Manager API Key",
+                            "description": "To connect to the UniFi Site Manager API, you need an API key:\n\n1. Sign in to [UniFi Site Manager](https://unifi.ui.com)\n2. Click **API** in the left navigation bar\n3. Click **Create API Key**\n4. Copy the generated key immediately - it will only be displayed once\n\n> **Note:** The API key is currently read-only and provides access to all hosts associated with your UI account."
+                        },
+                        {
+                            "title": "2. Find your console and site IDs",
+                            "description": "This connector polls the wireless event log of one site on one console. The endpoint is built from the console ID and site ID you provided when deploying the template:\n\n- **Console ID**: the `id` column in the UniFiSiteManager_Hosts_CL table, or the `hostId` column in UniFiSiteManager_Sites_CL (alternatively GET /v1/hosts)\n- **Site ID**: the `siteId` column in the UniFiSiteManager_Sites_CL table (alternatively GET /v1/sites)\n\n> **Note:** To monitor additional sites, deploy this template again with the other site ID and a new unique siteLabel (letters, digits and hyphens only) - keep the same table name so all sites collect into one table. Each deployment appears as its own connector in this list; connect every one of them with the same API key."
+                        },
+                        {
+                            "title": "3. Connect to UniFi Site Manager",
+                            "description": "Enter your API key below to start ingesting wireless client events into Microsoft Sentinel.",
+                            "instructions": [
+                                {
+                                    "type": "Textbox",
+                                    "parameters": {
+                                        "label": "UniFi Site Manager API Key",
+                                        "placeholder": "Enter your API key from unifi.ui.com",
+                                        "type": "password",
+                                        "name": "apiKey"
+                                    }
+                                },
+                                {
+                                    "type": "ConnectionToggleButton",
+                                    "parameters": {
+                                        "connectLabel": "Connect",
+                                        "disconnectLabel": "Disconnect"
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/',concat('DataConnector-', variables('_dataConnectorContentIdConnectorDefinition')))]",
+            "apiVersion": "2022-01-01-preview",
+            "type": "Microsoft.OperationalInsights/workspaces/providers/metadata",
+            "properties": {
+                "parentId": "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspace')), 'Microsoft.SecurityInsights/dataConnectorDefinitions', variables('_dataConnectorContentIdConnectorDefinition'))]",
+                "contentId": "[variables('_dataConnectorContentIdConnectorDefinition')]",
+                "kind": "DataConnector",
+                "version": "[variables('dataConnectorVersionConnectorDefinition')]",
+                "source": {
+                    "sourceId": "[variables('_solutionId')]",
+                    "name": "[variables('_solutionName')]",
+                    "kind": "Solution"
+                },
+                "author": {
+                    "name": "[variables('_solutionAuthor')]"
+                },
+                "support": {
+                    "name": "[variables('_solutionAuthor')]",
+                    "tier": "[variables('_solutionTier')]"
+                },
+                "dependencies": {
+                    "criteria": [
+                        {
+                            "version": "[variables('dataConnectorVersionConnections')]",
+                            "contentId": "[variables('_dataConnectorContentIdConnections')]",
+                            "kind": "ResourcesDataConnector"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "type": "Microsoft.OperationalInsights/workspaces/providers/contentTemplates",
+            "apiVersion": "2023-04-01-preview",
+            "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/', variables('dataConnectorTemplateNameConnections'), variables('dataConnectorVersionConnections'))]",
+            "location": "[parameters('workspace-location')]",
+            "dependsOn": [
+                "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspace')), 'Microsoft.SecurityInsights/contentPackages', variables('_solutionId'))]"
+            ],
+            "properties": {
+                "contentId": "[variables('_dataConnectorContentIdConnections')]",
+                "displayName": "[concat(variables('connectorDisplayName'), ' Connections')]",
+                "contentKind": "ResourcesDataConnector",
+                "mainTemplate": {
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                    "contentVersion": "[variables('dataConnectorVersionConnections')]",
+                    "parameters": {
+                        "connectorDefinitionName": {
+                            "defaultValue": "connectorDefinitionName",
+                            "type": "string",
+                            "minLength": 1
+                        },
+                        "workspace": {
+                            "defaultValue": "[parameters('workspace')]",
+                            "type": "string"
+                        },
+                        "dcrConfig": {
+                            "defaultValue": {
+                                "dataCollectionEndpoint": "data collection Endpoint",
+                                "dataCollectionRuleImmutableId": "data collection rule immutableId"
+                            },
+                            "type": "object"
+                        },
+                        "apiKey": {
+                            "defaultValue": "",
+                            "type": "securestring",
+                            "minLength": 1
+                        }
+                    },
+                    "variables": {
+                        "_dataConnectorContentIdConnections": "[variables('_dataConnectorContentIdConnections')]"
+                    },
+                    "resources": [
+                        {
+                            "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/',concat('DataConnector-', variables('_dataConnectorContentIdConnections')))]",
+                            "apiVersion": "2022-01-01-preview",
+                            "type": "Microsoft.OperationalInsights/workspaces/providers/metadata",
+                            "properties": {
+                                "parentId": "[extensionResourceId(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspace')), 'Microsoft.SecurityInsights/dataConnectors', variables('_dataConnectorContentIdConnections'))]",
+                                "contentId": "[variables('_dataConnectorContentIdConnections')]",
+                                "kind": "ResourcesDataConnector",
+                                "version": "[variables('dataConnectorVersionConnections')]",
+                                "source": {
+                                    "sourceId": "[variables('_solutionId')]",
+                                    "name": "[variables('_solutionName')]",
+                                    "kind": "Solution"
+                                },
+                                "author": {
+                                    "name": "[variables('_solutionAuthor')]"
+                                },
+                                "support": {
+                                    "name": "[variables('_solutionAuthor')]",
+                                    "tier": "[variables('_solutionTier')]"
+                                }
+                            }
+                        },
+                        {
+                            "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/', 'UniFiSiteManagerClientEventsPoller-', parameters('siteLabel'))]",
+                            "apiVersion": "2022-12-01-preview",
+                            "type": "Microsoft.OperationalInsights/workspaces/providers/dataConnectors",
+                            "location": "[parameters('workspace-location')]",
+                            "kind": "RestApiPoller",
+                            "properties": {
+                                "connectorDefinitionName": "[[parameters('connectorDefinitionName')]",
+                                "dataType": "[variables('_connectorDataType')]",
+                                "dcrConfig": {
+                                    "dataCollectionEndpoint": "[[parameters('dcrConfig').dataCollectionEndpoint]",
+                                    "dataCollectionRuleImmutableId": "[[parameters('dcrConfig').dataCollectionRuleImmutableId]",
+                                    "streamName": "[variables('streamName')]"
+                                },
+                                "auth": {
+                                    "type": "APIKey",
+                                    "ApiKey": "[[parameters('apiKey')]",
+                                    "ApiKeyName": "X-API-Key",
+                                    "ApiKeyIdentifier": ""
+                                },
+                                "request": {
+                                    "apiEndpoint": "[variables('apiEndpoint')]",
+                                    "httpMethod": "GET",
+                                    "queryParameters": {
+                                        "within": "[string(parameters('withinHours'))]",
+                                        "_limit": "1000"
+                                    },
+                                    "headers": {
+                                        "Accept": "application/json"
+                                    },
+                                    "rateLimitQPS": 100,
+                                    "queryWindowInMin": "[parameters('pollingIntervalMinutes')]",
+                                    "retryCount": 3,
+                                    "timeoutInSeconds": 120
+                                },
+                                "response": {
+                                    "eventsJsonPaths": ["$.data[*]"],
+                                    "format": "json"
+                                },
+                                "isActive": true
+                            }
+                        }
+                    ]
+                },
+                "packageKind": "Solution",
+                "packageVersion": "[variables('_solutionVersion')]",
+                "packageName": "[variables('_solutionName')]",
+                "contentProductId": "[concat(substring(variables('_solutionId'), 0, 50),'-','rdc','-', uniqueString(concat(variables('_solutionId'),'-','ResourcesDataConnector','-',variables('_dataConnectorContentIdConnections'),'-', variables('dataConnectorVersionConnections'))))]",
+                "packageId": "[variables('_solutionId')]",
+                "contentSchemaVersion": "3.0.0",
+                "version": "[variables('_solutionVersion')]"
+            }
+        },
+        {
+            "type": "Microsoft.OperationalInsights/workspaces/providers/contentPackages",
+            "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/', variables('_solutionId'))]",
+            "location": "[parameters('workspace-location')]",
+            "apiVersion": "2023-04-01-preview",
+            "properties": {
+                "version": "[variables('_solutionVersion')]",
+                "kind": "Solution",
+                "contentSchemaVersion": "3.0.0",
+                "contentId": "[variables('_solutionId')]",
+                "source": {
+                    "kind": "Solution",
+                    "name": "[variables('_solutionName')]",
+                    "sourceId": "[variables('_solutionId')]"
+                },
+                "author": {
+                    "name": "[variables('_solutionAuthor')]"
+                },
+                "support": {
+                    "name": "[variables('_solutionAuthor')]"
+                },
+                "dependencies": {
+                    "operator": "AND",
+                    "criteria": [
+                        {
+                            "kind": "DataConnector",
+                            "contentId": "[variables('dataConnectorVersionConnectorDefinition')]",
+                            "version": "[variables('_dataConnectorContentIdConnectorDefinition')]"
+                        }
+                    ]
+                },
+                "firstPublishDate": "2025-01-01",
+                "providers": ["[variables('_solutionAuthor')]"],
+                "contentKind": "Solution",
+                "packageId": "[variables('_solutionId')]",
+                "contentProductId": "[concat(substring(variables('_solutionId'), 0, 50),'-','sl','-', uniqueString(concat(variables('_solutionId'),'-','Solution','-',variables('_solutionId'),'-', variables('_solutionVersion'))))]",
+                "displayName": "[variables('connectorDisplayName')]",
+                "publisherDisplayName": "[concat(variables('_solutionAuthor'), ' (', variables('_solutionId'), ')')]",
+                "descriptionHtml": "The UniFi Site Manager Client Events solution for Microsoft Sentinel provides visibility into wireless client connectivity by ingesting client connect, disconnect and roaming events from the UniFi Network controller event log, proxied through the official UniFi Site Manager API (api.ui.com). Deploy once per site with a unique siteLabel - all sites collect into one table tagged with the siteLabel column. Trace which clients roamed between access points, radios and channels, correlate disconnects with access points and bands, and investigate Wi-Fi connection issues across your UniFi deployments."
+            }
+        }
+    ]
+}
