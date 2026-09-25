@@ -40,11 +40,11 @@
     },
     "pollingIntervalMinutes": {
       "type": "int",
-      "defaultValue": 15,
+      "defaultValue": 5,
       "minValue": 1,
       "maxValue": 60,
       "metadata": {
-        "description": "How often to poll the v2 system-log API (in minutes)"
+        "description": "How often to poll the v2 system-log API (in minutes). IMPORTANT: the endpoint serves only the NEWEST ~50 events per call (size/page/start/end parameters are ignored by the API) - poll frequently enough that consecutive polls overlap, otherwise events between two polls are missed. 5 minutes covers sustained rates of up to ~10 events per minute"
       }
     },
     "consoleId": {
@@ -78,7 +78,7 @@
     "outputStream": "[concat('Custom-', parameters('tableName'))]",
     "apiEndpoint": "[concat('https://api.ui.com/v1/connector/consoles/', parameters('consoleId'), '/proxy/network/v2/api/site/', parameters('siteId'), '/system-log/all')]",
     "_solutionName": "UniFi Site Manager",
-    "_solutionVersion": "3.0.4",
+    "_solutionVersion": "3.0.6",
     "_solutionAuthor": "Fetch Labs",
     "_solutionId": "[concat('azuresentinel.azure-sentinel-solution-unifi-sitemanager-clientevents-', parameters('siteLabel'))]",
     "_solutionTier": "Community",
@@ -395,7 +395,7 @@
           "id": "[variables('_connectorUiConfigId')]",
           "title": "[concat(variables('connectorDisplayName'), ' (via API)')]",
           "publisher": "Fetch Labs",
-          "descriptionMarkdown": "This connector ingests wireless client connection events from your UniFi Network controller via the **v2 system-log API**, proxied through the [UniFi Site Manager API](https://developer.ui.com/site-manager-api/gettingstarted) cloud connector, into Microsoft Sentinel.\n\nIt collects exactly what matters when troubleshooting Wi-Fi client connectivity: connects, disconnects and roaming - with access point, frequency band, channel, SSID, signal strength and more.\n\n**Data Collected (per event):**\n- Client events: `CLIENT_CONNECTED_WIRELESS`, `CLIENT_DISCONNECTED_WIRELESS`, `CLIENT_ROAMED` (plus wired client connects)\n- `BLOCKED_BY_FIREWALL` events (explains blocked connectivity)\n- Access point name/MAC/model, radio band (derived band column: 2.4GHz / 5GHz / 6GHz), channel, channel width, SSID, network + VLAN, signal strength, authentication method and a human-readable connection summary\n- The full event `parameters` object is kept as a dynamic column (roam source/target details included)\n\n**Scope:**\nThis connector polls the system log of exactly one site on one UniFi console. Deploy the template once per site you want to monitor: keep the same tableName on every deployment so all sites write into ONE table, and give each deployment a unique siteLabel - every row is tagged with it in the siteLabel column, so you can select a site with | where siteLabel == \"mr\".\n\n**Note on duplicates:**\nThe v2 system-log may return events older than the requested window, so an event can be ingested more than once. Always deduplicate before counting or listing: the sample queries below use summarize arg_max(TimeGenerated, *) by id - apply the same pattern in your own queries.\n\n**Requirements:**\n- The API key must belong to the UI account that OWNS the console (the cloud connector proxy rejects non-owner accounts with 403)\n- Console firmware with Network application 8.x+ (v2 system-log API)\n\n**Rate Limits:**\n- Cloud connector proxy: 100 requests per minute per console",
+          "descriptionMarkdown": "This connector ingests wireless client connection events from your UniFi Network controller via the **v2 system-log API**, proxied through the [UniFi Site Manager API](https://developer.ui.com/site-manager-api/gettingstarted) cloud connector, into Microsoft Sentinel.\n\nIt collects exactly what matters when troubleshooting Wi-Fi client connectivity: connects, disconnects and roaming - with access point, frequency band, channel, SSID, signal strength and more.\n\n**Data Collected (per event):**\n- Client events: `CLIENT_CONNECTED_WIRELESS`, `CLIENT_DISCONNECTED_WIRELESS`, `CLIENT_ROAMED` (plus wired client connects)\n- `BLOCKED_BY_FIREWALL` events (explains blocked connectivity)\n- Access point name/MAC/model, radio band (derived band column: 2.4GHz / 5GHz / 6GHz), channel, channel width, SSID, network + VLAN, signal strength, authentication method and a human-readable connection summary\n- The full event `parameters` object is kept as a dynamic column (roam source/target details included)\n\n**Scope:**\nThis connector polls the system log of exactly one site on one UniFi console. Deploy the template once per site you want to monitor: keep the same tableName on every deployment so all sites write into ONE table, and give each deployment a unique siteLabel - every row is tagged with it in the siteLabel column, so you can select a site with | where siteLabel == \"mr\".\n\n**Note on duplicates:**\nThe v2 system-log ignores requested time windows and pagination and serves only the NEWEST ~50 events per call - poll frequently (the default 5 minute interval) so consecutive polls overlap and no events are missed between polls. Each event may be stored a couple of times. Still always deduplicate before counting or listing: the sample queries below use summarize arg_max(TimeGenerated, *) by id - apply the same pattern in your own queries.\n\n**Requirements:**\n- The API key must belong to the UI account that OWNS the console (the cloud connector proxy rejects non-owner accounts with 403)\n- Console firmware with Network application 8.x+ (v2 system-log API)\n\n**Rate Limits:**\n- Cloud connector proxy: 100 requests per minute per console",
           "graphQueriesTableName": "[parameters('tableName')]",
           "graphQueries": [
             {
