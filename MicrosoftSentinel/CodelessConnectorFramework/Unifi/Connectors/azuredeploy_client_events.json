@@ -56,6 +56,7 @@
     },
     "siteId": {
       "type": "string",
+      "defaultValue": "default",
       "minLength": 1,
       "metadata": {
         "description": "LOCAL site identifier for the v2 API path (the site's internalReference, commonly 'default' - NOT the cloud siteId from UniFiSiteManager_Sites_CL). List local sites with GET /v1/connector/consoles/<consoleId>/proxy/network/integration/v1/sites using the same API key - each entry contains id, internalReference and name"
@@ -77,7 +78,7 @@
     "outputStream": "[concat('Custom-', parameters('tableName'))]",
     "apiEndpoint": "[concat('https://api.ui.com/v1/connector/consoles/', parameters('consoleId'), '/proxy/network/v2/api/site/', parameters('siteId'), '/system-log/all')]",
     "_solutionName": "UniFi Site Manager",
-    "_solutionVersion": "3.0.2",
+    "_solutionVersion": "3.0.4",
     "_solutionAuthor": "Fetch Labs",
     "_solutionId": "[concat('azuresentinel.azure-sentinel-solution-unifi-sitemanager-clientevents-', parameters('siteLabel'))]",
     "_solutionTier": "Community",
@@ -635,7 +636,7 @@
                   "isPostPayloadJson": true,
                   "queryTimeFormat": "UnixTimestampInMills",
                   "queryWindowInMin": "[parameters('pollingIntervalMinutes')]",
-                  "queryParametersTemplate": "{\"start\": {_QueryWindowStartTime}, \"end\": {_QueryWindowEndTime}, \"page\": 0, \"size\": 200}",
+                  "queryParametersTemplate": "{\"page\": 0, \"size\": 200}",
                   "headers": {
                     "Accept": "application/json"
                   },
