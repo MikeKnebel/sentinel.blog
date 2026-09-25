@@ -58,7 +58,7 @@
             "type": "string",
             "minLength": 1,
             "metadata": {
-                "description": "ID of the site whose wireless client events will be collected - the 'siteId' column in UniFiSiteManager_Sites_CL"
+                "description": "LOCAL site identifier for the classic UniFi event API path (the site's internalReference, commonly 'default' - NOT the cloud siteId from UniFiSiteManager_Sites_CL). List local sites with GET /v1/connector/consoles/<consoleId>/network/integration/v1/sites using the same API key - each entry contains id, internalReference and name"
             }
         },
         "siteLabel": {
@@ -84,7 +84,7 @@
         "dataCollectionEndpointId": "[resourceId('Microsoft.Insights/dataCollectionEndpoints', parameters('dataCollectionEndpointName'))]",
         "streamName": "[concat('Custom-', replace(parameters('tableName'), '_CL', '_Input'))]",
         "outputStream": "[concat('Custom-', parameters('tableName'))]",
-        "apiEndpoint": "[concat('https://api.ui.com/v1/connector/consoles/', parameters('consoleId'), '/proxy/network/api/s/', parameters('siteId'), '/stat/event')]",
+        "apiEndpoint": "[concat('https://api.ui.com/v1/connector/consoles/', parameters('consoleId'), '/network/api/s/', parameters('siteId'), '/stat/event')]",
         "_solutionName": "UniFi Site Manager",
         "_solutionVersion": "3.0.0",
         "_solutionAuthor": "Fetch Labs",
@@ -358,8 +358,8 @@
                             "description": "To connect to the UniFi Site Manager API, you need an API key:\n\n1. Sign in to [UniFi Site Manager](https://unifi.ui.com)\n2. Click **API** in the left navigation bar\n3. Click **Create API Key**\n4. Copy the generated key immediately - it will only be displayed once\n\n> **Note:** The API key is currently read-only and provides access to all hosts associated with your UI account."
                         },
                         {
-                            "title": "2. Find your console and site IDs",
-                            "description": "This connector polls the wireless event log of one site on one console. The endpoint is built from the console ID and site ID you provided when deploying the template:\n\n- **Console ID**: the `id` column in the UniFiSiteManager_Hosts_CL table, or the `hostId` column in UniFiSiteManager_Sites_CL (alternatively GET /v1/hosts)\n- **Site ID**: the `siteId` column in the UniFiSiteManager_Sites_CL table (alternatively GET /v1/sites)\n\n> **Note:** To monitor additional sites, deploy this template again with the other site ID and a new unique siteLabel (letters, digits and hyphens only) - keep the same table name so all sites collect into one table. Each deployment appears as its own connector in this list; connect every one of them with the same API key."
+                            "title": "2. Find your console and local site ID",
+                            "description": "This connector polls the wireless event log of one site on one console via the cloud connector proxy:\n\n- **Console ID**: the `id` column in the UniFiSiteManager_Hosts_CL table (alternatively GET /v1/hosts)\n- **Local site ID**: the site's local identifier (so called internalReference, commonly `default`) used by the classic UniFi event API - NOT the cloud siteId from UniFiSiteManager_Sites_CL. List local sites with GET /v1/connector/consoles/<consoleId>/network/integration/v1/sites using the same API key; each entry contains id, internalReference and name\n\n> **Note:** The API key must belong to the UI account that OWNS the console - non-organization keys are limited to the API key owner's consoles and requests for other admins' consoles return 403.\n> **Note:** To monitor additional sites, deploy this template again with the other local site ID and a new unique siteLabel (max. 10 characters) - keep the same table name so all sites collect into one table. Each deployment appears as its own connector in this list; connect every one of them with the same API key."
                         },
                         {
                             "title": "3. Connect to UniFi Site Manager",
